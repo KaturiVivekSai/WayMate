@@ -21,6 +21,7 @@ import {
 
 export const FindRidePage = () => {
   const {
+    user,
     rides,
     wallet,
     bookRideSeat,
@@ -343,14 +344,17 @@ export const FindRidePage = () => {
 
         {/* Ride Cards List */}
         {!isSearching && filteredRides.map(ride => {
-          const isFull = ride.seatsAvailable <= 0;
+          const openSeats = Number(ride.availableSeats ?? ride.seatsAvailable ?? 1);
+          const isFull = openSeats <= 0;
+          const isMyRide = ride.driverId === user?.id || ride.provider?.id === user?.id;
+
           return (
             <article
               key={ride.id}
               className="card"
               style={{
                 marginBottom: '14px',
-                borderLeft: isFull ? '4px solid #CBD5E1' : '4px solid var(--primary)',
+                borderLeft: isMyRide ? '4px solid #0D9488' : (isFull ? '4px solid #CBD5E1' : '4px solid var(--primary)'),
                 opacity: isFull ? 0.75 : 1
               }}
             >
@@ -371,11 +375,17 @@ export const FindRidePage = () => {
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <h3 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
-                        {ride.provider.name}
+                        {isMyRide ? `${ride.provider.name} (You)` : ride.provider.name}
                       </h3>
-                      <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
-                        is heading your way
-                      </span>
+                      {isMyRide ? (
+                        <span className="badge" style={{ backgroundColor: '#F0FDFA', color: '#0D9488', border: '1px solid #99F6E4', fontWeight: '700' }}>
+                          Your Offered Ride
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+                          is heading your way
+                        </span>
+                      )}
                     </div>
 
                     <div style={{ marginTop: '2px' }}>
@@ -422,9 +432,9 @@ export const FindRidePage = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '12px', color: 'var(--text-muted)' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <Clock size={13} />
-                    {ride.date} · {ride.departureTime}
+                    {ride.date || 'Today'} · {ride.departureTime}
                   </span>
-                  <span>~{ride.distanceKm} km</span>
+                  <span>~{ride.distanceKm || 4.2} km</span>
                 </div>
               </div>
 
@@ -440,18 +450,28 @@ export const FindRidePage = () => {
 
                   <span className={`badge ${isFull ? 'badge-subtle' : 'badge-seats'}`}>
                     <Users size={12} />
-                    {isFull ? 'No seats open' : `${ride.seatsAvailable} seat${ride.seatsAvailable > 1 ? 's' : ''} available`}
+                    {isFull ? 'No seats open' : `${openSeats} seat${openSeats > 1 ? 's' : ''} available`}
                   </span>
                 </div>
 
-                <button
-                  onClick={() => handleOpenBooking(ride)}
-                  disabled={isFull || isSubmitting}
-                  className="btn btn-primary btn-sm"
-                  style={{ minWidth: '120px' }}
-                >
-                  {isFull ? 'Full' : 'Request seat'}
-                </button>
+                {isMyRide ? (
+                  <button
+                    onClick={() => setActiveTab('trips')}
+                    className="btn btn-outline-primary btn-sm"
+                    style={{ minWidth: '120px' }}
+                  >
+                    Manage in Trips
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleOpenBooking(ride)}
+                    disabled={isFull || isSubmitting}
+                    className="btn btn-primary btn-sm"
+                    style={{ minWidth: '120px' }}
+                  >
+                    {isFull ? 'Full' : 'Request seat'}
+                  </button>
+                )}
               </div>
 
               {/* Note (safe layout rendering for Stress Test 4) */}

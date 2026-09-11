@@ -61,26 +61,36 @@ export const campusDistance = (a, b) => {
   return 2.0;
 };
 
-export const findNearestRides = (rides, from, to, time = '') => {
+export const findNearestRides = (rides = [], from = '', to = '', time = '') => {
   const wantedFrom = normaliseLocation(from);
   const wantedTo = normaliseLocation(to);
 
-  const active = rides.filter(ride => ride.status === 'ACTIVE' && Number(ride.seatsAvailable) > 0);
-  const exact = active.filter(ride => locationSimilarity(ride.from, wantedFrom) >= 0.88 && locationSimilarity(ride.to, wantedTo) >= 0.88)
-    .sort((a, b) => timeDistance(a.departureTime, time) - timeDistance(b.departureTime, time));
+  // Normalize rides and match all active/offered rides
+  const active = (rides || []).map(r => ({
+    ...r,
+    availableSeats: Number(r.availableSeats ?? r.seatsAvailable ?? 1),
+    seatsAvailable: Number(r.availableSeats ?? r.seatsAvailable ?? 1)
+  })).filter(ride => {
+    const status = String(ride.status || '').toUpperCase();
+    return (status === 'ACTIVE' || status === 'OFFERED' || status === '') && ride.availableSeats > 0;
+  });
 
-  if (exact.length) return { exact, nearby: [] };
+  if (!from && !to) {
+    return { exact: active, nearby: [] };
+  }
 
-  const nearby = active.map(ride => {
+  const exact = active.filter(ride => {
     const fromMatch = locationSimilarity(ride.from, wantedFrom);
     const toMatch = locationSimilarity(ride.to, wantedTo);
-    const geographicDistance = campusDistance(ride.from, from) + campusDistance(ride.to, to);
-    const timePenalty = timeDistance(ride.departureTime, time);
-    const matchScore = geographicDistance + (2 - fromMatch - toMatch) * 1.5 + timePenalty * 0.35;
-    return { ...ride, matchScore, fromMatch, toMatch };
-  }).sort((a, b) => a.matchScore - b.matchScore).slice(0, 5);
+    return fromMatch >= 0.5 || toMatch >= 0.5;
+  }).sort((a, b) => timeDistance(a.departureTime, time) - timeDistance(b.departureTime, time));
 
-  return { exact: [], nearby };
+  if (exact.length > 0) {
+    const otherRides = active.filter(r => !exact.some(e => e.id === r.id));
+    return { exact, nearby: otherRides };
+  }
+
+  return { exact: [], nearby: active };
 };
 
 export const calculateEstimatedCarbonSaved = (rides = []) => {
