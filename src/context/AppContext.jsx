@@ -1,5 +1,4 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { supabase } from '../lib/supabaseClient.js';
 import {
   apiFetchRides,
   apiCreateRide,
@@ -19,9 +18,9 @@ import {
   setSimulatedOfflineMode
 } from '../services/api.js';
 import {
-  signUp as supabaseSignUp,
-  signIn as supabaseSignIn,
-  signOut as supabaseSignOut,
+  signUp as jsonSignUp,
+  signIn as jsonSignIn,
+  signOut as jsonSignOut,
   getCurrentProfile
 } from '../services/auth.js';
 import { getUserSession } from '../services/session.js';
@@ -46,7 +45,7 @@ export const AppProvider = ({ children }) => {
   const [globalError, setGlobalError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // App dynamic data from Supabase
+  // App dynamic data from JSON database
   const [rides, setRides] = useState([]);
   const [wallet, setWallet] = useState({ balance: 50, thisMonthEarned: 0, thisMonthUsed: 0, transactions: [] });
   const [bookings, setBookings] = useState([]);
@@ -69,7 +68,7 @@ export const AppProvider = ({ children }) => {
     window.setTimeout(() => setToast(prev => prev?.message === message ? null : prev), 3500);
   }, []);
 
-  // Fetch all Supabase backend data for authenticated user
+  // Fetch all JSON database data for authenticated user
   const fetchAllData = useCallback(async (currentUserId) => {
     try {
       const [fetchedRides, fetchedWallet, fetchedTrips, fetchedLending, fetchedDemand, fetchedStats] = await Promise.all([
@@ -88,57 +87,32 @@ export const AppProvider = ({ children }) => {
       if (fetchedDemand) setDemandData(fetchedDemand);
       if (fetchedStats) setPlatformStats(fetchedStats);
     } catch (err) {
-      console.warn('Error fetching Supabase data:', err);
+      console.warn('Error fetching JSON data:', err);
     }
   }, []);
 
   const reloadData = useCallback(async () => {
-    if (user?.id) {
-      const refreshedProfile = await getCurrentProfile(user.id);
+    const currentId = user?.id || getUserSession()?.userId;
+    if (currentId) {
+      const refreshedProfile = await getCurrentProfile(currentId);
       if (refreshedProfile) setUser(refreshedProfile);
     }
-    await fetchAllData(user?.id);
+    await fetchAllData(currentId);
   }, [user?.id, fetchAllData]);
 
-  // Initial startup: Show loading screen briefly & check Supabase/Cookie session
+  // Initial startup: Show loading screen briefly & restore persistent session
   useEffect(() => {
     let mounted = true;
 
     const initAuth = async () => {
-      // Ensure smooth loading screen presence
       const minLoadTimer = new Promise(resolve => setTimeout(resolve, 800));
 
       try {
         let activeUser = null;
+        const session = getUserSession();
 
-        // 1. Check Supabase Auth session
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
-            activeUser = await getCurrentProfile(session.user.id);
-          }
-        } catch {}
-
-        // 2. Check Cookie / Browser session fallback
-        if (!activeUser) {
-          const cookieSession = getUserSession();
-          if (cookieSession?.userId) {
-            activeUser = await getCurrentProfile(cookieSession.userId);
-            if (!activeUser) {
-              activeUser = {
-                id: cookieSession.userId,
-                name: cookieSession.name,
-                username: cookieSession.name,
-                email: cookieSession.email,
-                credits: 50,
-                user_code: cookieSession.userCode || 'WM100001',
-                generatedUserId: cookieSession.userCode || 'WM100001',
-                avatar: cookieSession.avatar,
-                trust_score: 5.0,
-                college: 'PVPSIT Campus'
-              };
-            }
-          }
+        if (session?.userId) {
+          activeUser = await getCurrentProfile(session.userId);
         }
 
         await minLoadTimer;
@@ -166,61 +140,18 @@ export const AppProvider = ({ children }) => {
 
     initAuth();
 
-    // Supabase auth state listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
-      if (event === 'SIGNED_IN' && session?.user) {
-        const profile = await getCurrentProfile(session.user.id);
-        if (profile) {
-          setUser(profile);
-          await fetchAllData(profile.id);
-          setEntryMode('app');
-        }
-      } else if (event === 'SIGNED_OUT') {
-        const localSession = getUserSession();
-        if (!localSession) {
-          setUser(null);
-          setEntryMode('landing');
-          setActiveTab('dashboard');
-        }
-      }
-    });
+    // Listen to local JSON DB updates for live UI syncing
+    const handleDbUpdate = () => {
+      reloadData();
+    };
+
+    window.addEventListener('waymate_db_updated', handleDbUpdate);
 
     return () => {
       mounted = false;
-      subscription?.unsubscribe();
+      window.removeEventListener('waymate_db_updated', handleDbUpdate);
     };
-  }, [fetchAllData, setActiveTab]);
-
-  // Realtime subscription for Notifications & Bookings
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const channel = supabase
-      .channel(`user-realtime-${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${user.id}` },
-        payload => {
-          if (payload.new?.message) {
-            showToast(`${payload.new.title}: ${payload.new.message}`, 'info');
-          }
-          reloadData();
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'bookings', filter: `user_id=eq.${user.id}` },
-        () => {
-          reloadData();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.id, showToast, reloadData]);
+  }, [fetchAllData, reloadData]);
 
   // Mutations
   const runMutation = async (action, successMessage) => {
@@ -250,7 +181,7 @@ export const AppProvider = ({ children }) => {
     setGlobalError(null);
 
     try {
-      const data = await supabaseSignUp(form);
+      const data = await jsonSignUp(form);
 
       if (data?.user) {
         setUser(data.user);
@@ -281,13 +212,12 @@ export const AppProvider = ({ children }) => {
     setGlobalError(null);
 
     try {
-      const data = await supabaseSignIn(form);
+      const data = await jsonSignIn(form);
 
       if (data?.user) {
         setUser(data.user);
         await fetchAllData(data.user.id);
         setEntryMode('app');
-        // Restore saved tab if available
         const savedTab = sessionStorage.getItem(STORAGE_TAB_KEY);
         if (savedTab) setActiveTabState(savedTab);
       }
@@ -311,14 +241,14 @@ export const AppProvider = ({ children }) => {
   // LOGOUT
   const logout = async () => {
     try {
-      await supabaseSignOut();
+      await jsonSignOut();
       setUser(null);
       setEntryMode('landing');
       setActiveTab('dashboard');
       if (typeof sessionStorage !== 'undefined') {
         sessionStorage.removeItem(STORAGE_TAB_KEY);
       }
-      showToast('You have been signed out from Supabase.', 'info');
+      showToast('You have been signed out.', 'info');
     } catch (error) {
       console.warn('Logout error:', error);
       setUser(null);
@@ -343,38 +273,38 @@ export const AppProvider = ({ children }) => {
 
   // BOOK RIDE SEAT
   const bookRideSeat = ({ rideId, seats = 1, notes = '' }) => runMutation(
-    () => apiBookSeat({ rideId, seats, notes }),
-    'Seat booked! Community credits transferred to escrow.'
+    () => apiBookSeat({ rideId, seats, notes }, user),
+    'Seat booked! Community credits transferred.'
   );
 
   // OFFER RIDE
   const offerRide = rideData => runMutation(
-    () => apiCreateRide(rideData),
+    () => apiCreateRide(rideData, user),
     'Ride offered! Your campus route is now visible.'
   );
 
   // CANCEL TRIP
   const cancelTrip = bookingId => runMutation(
-    () => apiCancelTrip(bookingId),
+    () => apiCancelTrip(bookingId, user),
     'Trip cancelled. Credits refunded and seat restored.'
   );
 
   // REQUEST VEHICLE LEND
   const requestLend = vehicleId => runMutation(
-    () => apiRequestVehicleLend(vehicleId),
-    'Vehicle borrow request sent to the owner in Supabase.'
+    () => apiRequestVehicleLend(vehicleId, user),
+    'Vehicle borrow request sent to the owner.'
   );
 
   // UPDATE PROFILE
   const updateProfile = data => runMutation(
     async () => {
-      const res = await apiUpdateProfile(data);
+      const res = await apiUpdateProfile(data, user);
       if (res?.user) {
         setUser(prev => ({ ...prev, ...res.user }));
       }
       return res;
     },
-    'Profile details updated in Supabase.'
+    'Profile details updated successfully.'
   );
 
   const verifyAccount = () => runMutation(
