@@ -1,6 +1,7 @@
 import {
   dbFetchRides,
   dbCreateRide,
+  dbDeleteRide,
   dbBookSeat,
   dbCancelTrip,
   dbFetchWallet,
@@ -11,6 +12,10 @@ import {
   dbUpdateProfile,
   dbFetchDemandData,
   dbFetchPlatformStats,
+  dbFetchNotifications,
+  dbMarkNotificationRead,
+  dbMarkAllNotificationsRead,
+  dbDeleteNotification,
   getJsonDatabase,
   saveJsonDatabase
 } from './jsonDataStore.js';
@@ -47,6 +52,12 @@ export async function apiCreateRide(rideData, currentUser) {
   const sessionUser = currentUser || getUserSession();
   if (!sessionUser) throw new Error('You must be logged in to offer a ride.');
   return dbCreateRide(rideData, sessionUser);
+}
+
+export async function apiDeleteRide(rideId, currentUser) {
+  const sessionUser = currentUser || getUserSession();
+  if (!sessionUser) throw new Error('You must be logged in to remove a ride.');
+  return dbDeleteRide(rideId, sessionUser);
 }
 
 export async function apiBookSeat({ rideId, seats = 1, notes = '' }, currentUser) {
@@ -100,6 +111,22 @@ export async function apiFetchPlatformStats() {
   return dbFetchPlatformStats();
 }
 
+export async function apiFetchNotifications(userId) {
+  return dbFetchNotifications(userId);
+}
+
+export async function apiMarkNotificationRead(notificationId) {
+  return dbMarkNotificationRead(notificationId);
+}
+
+export async function apiMarkAllNotificationsRead(userId) {
+  return dbMarkAllNotificationsRead(userId);
+}
+
+export async function apiDeleteNotification(notificationId) {
+  return dbDeleteNotification(notificationId);
+}
+
 export const loadDatabase = () => getJsonDatabase();
 export const resetDatabase = () => {
   if (typeof localStorage !== 'undefined') {
@@ -109,3 +136,4 @@ export const resetDatabase = () => {
 };
 export const saveDatabase = (db) => saveJsonDatabase(db);
 export const clearSession = () => {};
+

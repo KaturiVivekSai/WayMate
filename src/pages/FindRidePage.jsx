@@ -16,7 +16,8 @@ import {
   Bike,
   Sparkles,
   Info,
-  CheckCircle2
+  CheckCircle2,
+  Trash2
 } from 'lucide-react';
 
 export const FindRidePage = () => {
@@ -25,6 +26,7 @@ export const FindRidePage = () => {
     rides,
     wallet,
     bookRideSeat,
+    deleteRide,
     isSubmitting,
     globalError,
     setActiveTab,
@@ -47,6 +49,8 @@ export const FindRidePage = () => {
   const [selectedRide, setSelectedRide] = useState(null);
   const [seatsToBook, setSeatsToBook] = useState(1);
   const [bookingError, setBookingError] = useState('');
+  const [removingRide, setRemovingRide] = useState(null);
+  const [removeRideError, setRemoveRideError] = useState('');
 
   // Preset location quick picks
   const handleQuickRoute = (from, to) => {
@@ -97,6 +101,19 @@ export const FindRidePage = () => {
     } catch (err) {
       if (err.name !== 'OfflineError') {
         setBookingError(err.message || 'Failed to reserve seat. Please try again.');
+      }
+    }
+  };
+
+  const handleConfirmRemoveRide = async () => {
+    if (!removingRide) return;
+    setRemoveRideError('');
+    try {
+      await deleteRide(removingRide.id);
+      setRemovingRide(null);
+    } catch (err) {
+      if (err.name !== 'OfflineError') {
+        setRemoveRideError(err.message || 'Failed to remove offered ride.');
       }
     }
   };
@@ -300,7 +317,7 @@ export const FindRidePage = () => {
           </>
         )}
 
-        {/* Empty State (Stress Test 6) */}
+        {/* Empty State */}
         {!isSearching && filteredRides.length === 0 && nearbyRides.length === 0 && (
           <div className="card" style={{ textAlign: 'center', padding: '40px 20px', backgroundColor: '#FFFFFF' }}>
             <div style={{
@@ -455,13 +472,26 @@ export const FindRidePage = () => {
                 </div>
 
                 {isMyRide ? (
-                  <button
-                    onClick={() => setActiveTab('trips')}
-                    className="btn btn-outline-primary btn-sm"
-                    style={{ minWidth: '120px' }}
-                  >
-                    Manage in Trips
-                  </button>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={() => setActiveTab('trips')}
+                      className="btn btn-outline-primary btn-sm"
+                    >
+                      Manage
+                    </button>
+                    <button
+                      onClick={() => {
+                        setRemovingRide(ride);
+                        setRemoveRideError('');
+                      }}
+                      className="btn btn-danger btn-sm"
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                      title="Remove this offered ride"
+                    >
+                      <Trash2 size={13} />
+                      <span>Remove</span>
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={() => handleOpenBooking(ride)}
@@ -474,7 +504,7 @@ export const FindRidePage = () => {
                 )}
               </div>
 
-              {/* Note (safe layout rendering for Stress Test 4) */}
+              {/* Note */}
               {ride.note && (
                 <div className="text-break" style={{
                   marginTop: '10px',
@@ -614,6 +644,85 @@ export const FindRidePage = () => {
                 disabled={isSubmitting}
               >
                 {isSubmitting ? 'Reserving Seat...' : `Confirm & Deduct ${selectedRide.contribution * seatsToBook} Credits`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove Offered Ride Confirmation Modal */}
+      {removingRide && (
+        <div className="modal-overlay" onClick={() => !isSubmitting && setRemovingRide(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+              <div style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '50%',
+                backgroundColor: 'var(--danger-bg)',
+                color: 'var(--danger)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Trash2 size={22} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '17px', fontWeight: '800', color: 'var(--text-main)', margin: 0 }}>
+                  Remove Offered Ride
+                </h3>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Cancels this ride and removes it from public search
+                </div>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+              Are you sure you want to remove your offered ride from <strong>{removingRide.from} → {removingRide.to}</strong>?
+            </p>
+
+            <div style={{
+              backgroundColor: 'var(--bg-subtle)',
+              padding: '12px',
+              borderRadius: 'var(--radius-md)',
+              marginBottom: '16px',
+              fontSize: '12.5px'
+            }}>
+              <div style={{ color: 'var(--text-main)', fontWeight: '600', marginBottom: '4px' }}>
+                Automatic Protections:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--text-muted)' }}>
+                <li>Any booked passengers will automatically receive 100% credit refunds.</li>
+                <li>Affected passengers will be immediately notified.</li>
+                <li>The ride will be removed from community search results.</li>
+              </ul>
+            </div>
+
+            {removeRideError && (
+              <div className="alert alert-danger" style={{ marginBottom: '14px' }}>
+                <AlertCircle size={14} />
+                <span>{removeRideError}</span>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setRemovingRide(null)}
+                className="btn btn-secondary"
+                style={{ flex: 1 }}
+                disabled={isSubmitting}
+              >
+                Keep Ride
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRemoveRide}
+                className="btn btn-danger"
+                style={{ flex: 1 }}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? 'Removing...' : 'Confirm & Remove'}
               </button>
             </div>
           </div>

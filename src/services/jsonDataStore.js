@@ -158,6 +158,8 @@ export function dbBookSeat({ rideId, seats = 1, notes = '', currentUser }) {
   const bookingRecord = {
     id: generateId('book'),
     userId: currentUser.id,
+    userName: currentUser.name || currentUser.full_name || 'Passenger',
+    userPhone: currentUser.phone || '',
     rideId: ride.id,
     role: 'PASSENGER',
     status: 'CONFIRMED',
@@ -175,9 +177,11 @@ export function dbBookSeat({ rideId, seats = 1, notes = '', currentUser }) {
     createdAt: Date.now()
   };
 
+  if (!db.bookings) db.bookings = [];
   db.bookings.unshift(bookingRecord);
 
   // Record credit transaction in JSON
+  if (!db.credit_transactions) db.credit_transactions = [];
   db.credit_transactions.unshift({
     id: generateId('tx'),
     userId: currentUser.id,
@@ -190,15 +194,22 @@ export function dbBookSeat({ rideId, seats = 1, notes = '', currentUser }) {
     timestamp: 'Just now'
   });
 
-  // Create notification for driver
+  // Create detailed notification for driver / vehicle owner
+  if (!db.notifications) db.notifications = [];
   db.notifications.unshift({
     id: generateId('notif'),
     recipientId: ride.driverId,
     senderId: currentUser.id,
+    senderName: currentUser.name || currentUser.full_name || 'Peer Commuter',
+    senderAvatar: currentUser.avatar || currentUser.avatar_url || `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(currentUser.name || 'User')}`,
     type: 'BOOKING_CONFIRMED',
-    title: 'Seat Reserved',
-    message: `${currentUser.name || 'A student'} booked ${seats} seat(s) for your trip to ${ride.to}.`,
-    timestamp: 'Just now'
+    title: 'New Seat Booking Alert',
+    message: `${currentUser.name || 'A student'} booked ${seats} seat(s) for your trip: ${ride.from} → ${ride.to} (${ride.departureTime}). Fuel credits: +${totalCredits}`,
+    timestamp: 'Just now',
+    read: false,
+    createdAt: Date.now(),
+    rideId: ride.id,
+    bookingId: bookingRecord.id
   });
 
   saveJsonDatabase(db);
@@ -222,6 +233,7 @@ export function dbCancelTrip(bookingId, currentUser) {
       db.users[userIdx].credits = (db.users[userIdx].credits || 0) + refundAmount;
     }
 
+    if (!db.credit_transactions) db.credit_transactions = [];
     db.credit_transactions.unshift({
       id: generateId('tx'),
       userId: currentUser.id,
@@ -239,10 +251,144 @@ export function dbCancelTrip(bookingId, currentUser) {
   const ride = db.rides.find(r => r.id === booking.rideId);
   if (ride) {
     ride.availableSeats = (ride.availableSeats || 0) + (booking.seatsBooked || 1);
+
+    // Send cancellation notification to vehicle owner / driver
+    if (ride.driverId && ride.driverId !== currentUser.id) {
+      if (!db.notifications) db.notifications = [];
+      db.notifications.unshift({
+        id: generateId('notif'),
+        recipientId: ride.driverId,
+        senderId: currentUser.id,
+        senderName: currentUser.name || currentUser.full_name || 'Passenger',
+        senderAvatar: currentUser.avatar || currentUser.avatar_url || '',
+        type: 'BOOKING_CANCELLED',
+        title: 'Passenger Cancelled Seat',
+        message: `${currentUser.name || 'A passenger'} cancelled their booking for your ride: ${ride.from} → ${ride.to}. (+${booking.seatsBooked || 1} seat restored).`,
+        timestamp: 'Just now',
+        read: false,
+        createdAt: Date.now()
+      });
+    }
   }
 
   saveJsonDatabase(db);
   return { success: true, refunded: refundAmount };
+}
+
+/**
+ * Remove / Delete an Offered Ride by the driver
+ * Automatically cancels any passenger bookings, refunds their credits, and notifies them.
+ */
+export function dbDeleteRide(rideId, currentUser) {
+  if (!currentUser) throw new Error('You must be logged in to manage rides.');
+
+  const db = getJsonDatabase();
+  const rideIdx = db.rides.findIndex(r => r.id === rideId);
+  if (rideIdx === -1) throw new Error('Ride offer not found or already removed.');
+
+  const ride = db.rides[rideIdx];
+  if (ride.driverId !== currentUser.id) {
+    throw new Error('You do not have permission to remove this ride.');
+  }
+
+  // 1. Find all active bookings on this ride
+  const affectedBookings = (db.bookings || []).filter(b => b.rideId === rideId && b.status !== 'CANCELLED');
+
+  // 2. Refund each passenger and send them a cancellation notification
+  affectedBookings.forEach(booking => {
+    booking.status = 'CANCELLED';
+    const refundCredits = booking.creditsPaid || booking.contribution || 0;
+
+    if (refundCredits > 0) {
+      const passengerIdx = db.users.findIndex(u => u.id === booking.userId);
+      if (passengerIdx !== -1) {
+        db.users[passengerIdx].credits = (db.users[passengerIdx].credits || 0) + refundCredits;
+      }
+
+      if (!db.credit_transactions) db.credit_transactions = [];
+      db.credit_transactions.unshift({
+        id: generateId('tx'),
+        userId: booking.userId,
+        type: 'REFUND',
+        amount: refundCredits,
+        isPositive: true,
+        delta: `+${refundCredits}`,
+        title: 'Refund: Ride cancelled by driver',
+        description: `${currentUser.name || 'Driver'} cancelled the trip to ${ride.to}`,
+        timestamp: 'Just now'
+      });
+    }
+
+    // Notify passenger
+    if (!db.notifications) db.notifications = [];
+    db.notifications.unshift({
+      id: generateId('notif'),
+      recipientId: booking.userId,
+      senderId: currentUser.id,
+      senderName: currentUser.name || 'Driver',
+      type: 'RIDE_CANCELLED_BY_DRIVER',
+      title: 'Offered Ride Cancelled by Driver',
+      message: `${currentUser.name || 'The driver'} cancelled the scheduled ride from ${ride.from} to ${ride.to}. Your ${refundCredits} credits have been fully refunded.`,
+      timestamp: 'Just now',
+      read: false,
+      createdAt: Date.now()
+    });
+  });
+
+  // 3. Remove the ride from active rides
+  db.rides.splice(rideIdx, 1);
+
+  // Decrement user's rides_shared count
+  const driverIdx = db.users.findIndex(u => u.id === currentUser.id);
+  if (driverIdx !== -1 && db.users[driverIdx].rides_shared > 0) {
+    db.users[driverIdx].rides_shared -= 1;
+  }
+
+  saveJsonDatabase(db);
+  return { success: true, affectedBookingsCount: affectedBookings.length };
+}
+
+// ============================================================================
+// NOTIFICATIONS MANAGEMENT (JSON BASED)
+// ============================================================================
+
+export function dbFetchNotifications(userId) {
+  if (!userId) return [];
+  const db = getJsonDatabase();
+  return (db.notifications || []).filter(n => n.recipientId === userId);
+}
+
+export function dbMarkNotificationRead(notificationId) {
+  const db = getJsonDatabase();
+  const notif = (db.notifications || []).find(n => n.id === notificationId);
+  if (notif) {
+    notif.read = true;
+    saveJsonDatabase(db);
+  }
+  return { success: true };
+}
+
+export function dbMarkAllNotificationsRead(userId) {
+  const db = getJsonDatabase();
+  let changed = false;
+  (db.notifications || []).forEach(n => {
+    if (n.recipientId === userId && !n.read) {
+      n.read = true;
+      changed = true;
+    }
+  });
+  if (changed) saveJsonDatabase(db);
+  return { success: true };
+}
+
+export function dbDeleteNotification(notificationId) {
+  const db = getJsonDatabase();
+  const idx = (db.notifications || []).findIndex(n => n.id === notificationId);
+  if (idx !== -1) {
+    db.notifications.splice(idx, 1);
+    saveJsonDatabase(db);
+  }
+  return { success: true };
 }
 
 // ============================================================================

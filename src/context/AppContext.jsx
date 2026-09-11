@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import {
   apiFetchRides,
   apiCreateRide,
+  apiDeleteRide,
   apiBookSeat,
   apiCancelTrip,
   apiFetchWallet,
@@ -13,6 +14,10 @@ import {
   apiFetchDemandData,
   apiFetchPlatformStats,
   apiVerifyUser,
+  apiFetchNotifications,
+  apiMarkNotificationRead,
+  apiMarkAllNotificationsRead,
+  apiDeleteNotification,
   getSimulatedOfflineMode,
   isNetworkAvailable,
   setSimulatedOfflineMode
@@ -50,6 +55,8 @@ export const AppProvider = ({ children }) => {
   const [wallet, setWallet] = useState({ balance: 50, thisMonthEarned: 0, thisMonthUsed: 0, transactions: [] });
   const [bookings, setBookings] = useState([]);
   const [lending, setLending] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [demandData, setDemandData] = useState({ activeRidesCount: 0, requestsCount: 0, bookingsCount: 0, hotCorridors: [] });
   const [platformStats, setPlatformStats] = useState({ sharedRides: 14, members: 4, carbonSaved: 0.1, todayBooked: 2, todayOffered: 4, activeRequests: 2 });
   const [searchParams, setSearchParams] = useState({ from: 'PVPSIT Parking', to: 'Green Residency PG', time: '5:30 PM' });
@@ -71,11 +78,12 @@ export const AppProvider = ({ children }) => {
   // Fetch all JSON database data for authenticated user
   const fetchAllData = useCallback(async (currentUserId) => {
     try {
-      const [fetchedRides, fetchedWallet, fetchedTrips, fetchedLending, fetchedDemand, fetchedStats] = await Promise.all([
+      const [fetchedRides, fetchedWallet, fetchedTrips, fetchedLending, fetchedNotifs, fetchedDemand, fetchedStats] = await Promise.all([
         apiFetchRides(),
         currentUserId ? apiFetchWallet(currentUserId) : Promise.resolve(null),
         currentUserId ? apiFetchTrips(currentUserId) : Promise.resolve([]),
         currentUserId ? apiFetchLending(currentUserId) : Promise.resolve([]),
+        currentUserId ? apiFetchNotifications(currentUserId) : Promise.resolve([]),
         apiFetchDemandData(),
         apiFetchPlatformStats()
       ]);
@@ -84,6 +92,7 @@ export const AppProvider = ({ children }) => {
       if (fetchedWallet) setWallet(fetchedWallet);
       setBookings(fetchedTrips || []);
       setLending(fetchedLending || []);
+      setNotifications(fetchedNotifs || []);
       if (fetchedDemand) setDemandData(fetchedDemand);
       if (fetchedStats) setPlatformStats(fetchedStats);
     } catch (err) {
@@ -274,7 +283,7 @@ export const AppProvider = ({ children }) => {
   // BOOK RIDE SEAT
   const bookRideSeat = ({ rideId, seats = 1, notes = '' }) => runMutation(
     () => apiBookSeat({ rideId, seats, notes }, user),
-    'Seat booked! Community credits transferred.'
+    'Seat booked! Driver has been notified & community credits transferred.'
   );
 
   // OFFER RIDE
@@ -283,10 +292,16 @@ export const AppProvider = ({ children }) => {
     'Ride offered! Your campus route is now visible.'
   );
 
-  // CANCEL TRIP
+  // DELETE / REMOVE OFFERED RIDE
+  const deleteRide = (rideId) => runMutation(
+    () => apiDeleteRide(rideId, user),
+    'Offered ride removed. Any booked passengers were refunded.'
+  );
+
+  // CANCEL TRIP (PASSENGER)
   const cancelTrip = bookingId => runMutation(
     () => apiCancelTrip(bookingId, user),
-    'Trip cancelled. Credits refunded and seat restored.'
+    'Trip cancelled. Credits refunded, seat restored & driver notified.'
   );
 
   // REQUEST VEHICLE LEND
@@ -294,6 +309,23 @@ export const AppProvider = ({ children }) => {
     () => apiRequestVehicleLend(vehicleId, user),
     'Vehicle borrow request sent to the owner.'
   );
+
+  // NOTIFICATION ACTIONS
+  const markNotificationRead = async (notificationId) => {
+    await apiMarkNotificationRead(notificationId);
+    setNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, read: true } : n));
+  };
+
+  const markAllNotificationsRead = async () => {
+    if (!user?.id) return;
+    await apiMarkAllNotificationsRead(user.id);
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  };
+
+  const deleteNotification = async (notificationId) => {
+    await apiDeleteNotification(notificationId);
+    setNotifications(prev => prev.filter(n => n.id !== notificationId));
+  };
 
   // UPDATE PROFILE
   const updateProfile = data => runMutation(
@@ -319,12 +351,18 @@ export const AppProvider = ({ children }) => {
     showToast(next ? 'Offline simulation enabled.' : 'Network restored.', next ? 'info' : 'success');
   };
 
+  const unreadCount = notifications.filter(n => !n.read).length;
+
   const value = {
     user,
     rides,
     wallet,
     bookings,
     lending,
+    notifications,
+    unreadCount,
+    isNotificationsOpen,
+    setIsNotificationsOpen,
     demandData,
     events: demandData.hotCorridors || [],
     platformStats,
@@ -351,8 +389,12 @@ export const AppProvider = ({ children }) => {
     verifyAccount,
     bookRideSeat,
     offerRide,
+    deleteRide,
     cancelTrip,
     requestLend,
+    markNotificationRead,
+    markAllNotificationsRead,
+    deleteNotification,
     updateProfile,
     reloadData
   };
@@ -365,3 +407,4 @@ export const useApp = () => {
   if (!value) throw new Error('useApp must be used within AppProvider');
   return value;
 };
+

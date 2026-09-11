@@ -2,6 +2,7 @@ import React from 'react';
 import { AppProvider, useApp } from './context/AppContext.jsx';
 import { Header } from './components/Header.jsx';
 import { Navigation } from './components/Navigation.jsx';
+import { NotificationCenterModal } from './components/NotificationCenterModal.jsx';
 import { FindRidePage } from './pages/FindRidePage.jsx';
 import { OfferRidePage } from './pages/OfferRidePage.jsx';
 import { WalletPage } from './pages/WalletPage.jsx';
@@ -27,6 +28,7 @@ const AppContent = () => {
     <div className="app-shell">
       <Header />
       <Navigation />
+      <NotificationCenterModal />
 
       <main className="main-content">
         {activeTab === 'dashboard' && <DashboardPage />}

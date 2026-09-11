@@ -12,23 +12,25 @@ import {
   XCircle,
   CheckCircle,
   ShieldCheck,
-  RefreshCw
+  RefreshCw,
+  Trash2
 } from 'lucide-react';
 
 export const TripsPage = () => {
-  const { bookings, cancelTrip, isSubmitting, globalError, setActiveTab } = useApp();
+  const { bookings, cancelTrip, deleteRide, isSubmitting, globalError, setActiveTab } = useApp();
 
   const [activeTab, setActiveTabFilter] = useState('UPCOMING'); // 'UPCOMING' | 'OFFERED' | 'COMPLETED'
   const [cancellingBooking, setCancellingBooking] = useState(null);
-  const [cancelError, setCancelError] = useState('');
+  const [removingRide, setRemovingRide] = useState(null);
+  const [actionError, setActionError] = useState('');
 
   // Filter bookings according to active tab
   const filteredBookings = bookings.filter(b => {
     if (activeTab === 'UPCOMING') {
-      return b.status === 'UPCOMING';
+      return (b.role === 'PASSENGER' || b.type === 'PASSENGER') && (b.status === 'CONFIRMED' || b.status === 'UPCOMING');
     }
     if (activeTab === 'OFFERED') {
-      return b.status === 'OFFERED' || b.type === 'PROVIDER';
+      return b.role === 'DRIVER' || b.status === 'OFFERED' || b.type === 'PROVIDER';
     }
     if (activeTab === 'COMPLETED') {
       return b.status === 'COMPLETED' || b.status === 'CANCELLED';
@@ -36,20 +38,38 @@ export const TripsPage = () => {
     return true;
   });
 
-  const handleOpenCancel = (booking) => {
+  const handleOpenCancelBooking = (booking) => {
     setCancellingBooking(booking);
-    setCancelError('');
+    setActionError('');
+  };
+
+  const handleOpenRemoveRide = (trip) => {
+    setRemovingRide(trip);
+    setActionError('');
   };
 
   const handleConfirmCancel = async () => {
     if (!cancellingBooking) return;
-    setCancelError('');
+    setActionError('');
     try {
       await cancelTrip(cancellingBooking.id);
       setCancellingBooking(null);
     } catch (err) {
       if (err.name !== 'OfflineError') {
-        setCancelError(err.message || 'Failed to cancel trip.');
+        setActionError(err.message || 'Failed to cancel trip.');
+      }
+    }
+  };
+
+  const handleConfirmRemoveRide = async () => {
+    if (!removingRide) return;
+    setActionError('');
+    try {
+      await deleteRide(removingRide.rideId || removingRide.id);
+      setRemovingRide(null);
+    } catch (err) {
+      if (err.name !== 'OfflineError') {
+        setActionError(err.message || 'Failed to remove offered ride.');
       }
     }
   };
@@ -133,7 +153,7 @@ export const TripsPage = () => {
         })}
       </div>
 
-      {/* Empty States (Rubric requirement) */}
+      {/* Empty States */}
       {filteredBookings.length === 0 && (
         <div className="card" style={{ textAlign: 'center', padding: '40px 20px' }}>
           <div style={{
@@ -181,7 +201,7 @@ export const TripsPage = () => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
         {filteredBookings.map(trip => {
           const isCancelled = trip.status === 'CANCELLED';
-          const isOffered = trip.type === 'PROVIDER';
+          const isOffered = trip.role === 'DRIVER' || trip.type === 'PROVIDER' || trip.status === 'OFFERED';
 
           return (
             <div
@@ -201,7 +221,7 @@ export const TripsPage = () => {
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                     <span className={`badge ${
-                      trip.status === 'UPCOMING' ? 'badge-verified' :
+                      trip.status === 'CONFIRMED' || trip.status === 'UPCOMING' ? 'badge-verified' :
                       trip.status === 'OFFERED' ? 'badge-seats' :
                       trip.status === 'COMPLETED' ? 'badge-subtle' :
                       'badge-warning'
@@ -209,7 +229,7 @@ export const TripsPage = () => {
                       {trip.status}
                     </span>
                     <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
-                      {trip.type === 'PROVIDER' ? 'Offered by You' : 'Passenger Booking'}
+                      {isOffered ? 'Offered by You' : 'Passenger Booking'}
                     </span>
                   </div>
 
@@ -255,28 +275,127 @@ export const TripsPage = () => {
                 </div>
 
                 <div style={{ fontWeight: '600' }}>
-                  {trip.type === 'PASSENGER' ? `Ride with ${trip.partnerName}` : `${trip.seatsBooked} empty seat(s) offered`}
+                  {isOffered ? `${trip.seatsBooked || 1} seat(s) on route` : `Ride with ${trip.partnerName || 'Driver'}`}
                 </div>
               </div>
 
-              {/* Cancellation action */}
-              {trip.status === 'UPCOMING' && (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
+                {/* 1. Driver can Remove / Cancel Offered Ride */}
+                {isOffered && trip.status !== 'CANCELLED' && (
                   <button
-                    onClick={() => handleOpenCancel(trip)}
+                    onClick={() => handleOpenRemoveRide(trip)}
+                    disabled={isSubmitting}
+                    className="btn btn-danger btn-sm"
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Trash2 size={13} />
+                    <span>Remove Offered Ride</span>
+                  </button>
+                )}
+
+                {/* 2. Passenger can Cancel Booking */}
+                {!isOffered && (trip.status === 'CONFIRMED' || trip.status === 'UPCOMING') && (
+                  <button
+                    onClick={() => handleOpenCancelBooking(trip)}
                     disabled={isSubmitting}
                     className="btn btn-danger btn-sm"
                   >
                     Cancel Booking & Refund Credits
                   </button>
-                </div>
-              )}
+                )}
+
+                {trip.status === 'CANCELLED' && (
+                  <span style={{ fontSize: '12px', color: 'var(--danger)', fontWeight: '600' }}>
+                    Cancelled
+                  </span>
+                )}
+              </div>
             </div>
           );
         })}
       </div>
 
-      {/* Cancel Confirmation Modal (Direct test target for judge's live-change/delete test) */}
+      {/* 1. Remove Offered Ride Confirmation Modal */}
+      {removingRide && (
+        <div className="modal-overlay" onClick={() => !isSubmitting && setRemovingRide(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+              <div style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '50%',
+                backgroundColor: 'var(--danger-bg)',
+                color: 'var(--danger)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Trash2 size={22} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '17px', fontWeight: '800', color: 'var(--text-main)', margin: 0 }}>
+                  Remove Offered Ride
+                </h3>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Cancels this ride and removes it from public search
+                </div>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+              Are you sure you want to remove your offered ride from <strong>{removingRide.from} → {removingRide.to}</strong>?
+            </p>
+
+            <div style={{
+              backgroundColor: 'var(--bg-subtle)',
+              padding: '12px',
+              borderRadius: 'var(--radius-md)',
+              marginBottom: '16px',
+              fontSize: '12.5px'
+            }}>
+              <div style={{ color: 'var(--text-main)', fontWeight: '600', marginBottom: '4px' }}>
+                Automatic Protections:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--text-muted)' }}>
+                <li>Any booked passengers will automatically receive 100% credit refunds.</li>
+                <li>Affected passengers will be immediately notified.</li>
+                <li>The ride will be removed from community search results.</li>
+              </ul>
+            </div>
+
+            {actionError && (
+              <div className="alert alert-danger" style={{ marginBottom: '14px' }}>
+                <AlertCircle size={14} />
+                <span>{actionError}</span>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setRemovingRide(null)}
+                className="btn btn-secondary"
+                style={{ flex: 1 }}
+                disabled={isSubmitting}
+              >
+                Keep Ride
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRemoveRide}
+                className="btn btn-danger"
+                style={{ flex: 1 }}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? 'Removing...' : 'Confirm & Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Passenger Cancel Booking Confirmation Modal */}
       {cancellingBooking && (
         <div className="modal-overlay" onClick={() => !isSubmitting && setCancellingBooking(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -294,7 +413,7 @@ export const TripsPage = () => {
                 <AlertCircle size={22} />
               </div>
               <div>
-                <h3 style={{ fontSize: '17px', fontWeight: '800', color: 'var(--text-main)' }}>
+                <h3 style={{ fontSize: '17px', fontWeight: '800', color: 'var(--text-main)', margin: 0 }}>
                   Confirm Trip Cancellation
                 </h3>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
@@ -320,14 +439,18 @@ export const TripsPage = () => {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-tertiary)', fontSize: '12px' }}>
                 <span>Seat capacity restored:</span>
-                <span>+{cancellingBooking.seatsBooked} seat</span>
+                <span>+{cancellingBooking.seatsBooked || 1} seat</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-tertiary)', fontSize: '12px', marginTop: '2px' }}>
+                <span>Driver notification:</span>
+                <span>Will be alerted automatically</span>
               </div>
             </div>
 
-            {cancelError && (
+            {actionError && (
               <div className="alert alert-danger" style={{ marginBottom: '14px' }}>
                 <AlertCircle size={14} />
-                <span>{cancelError}</span>
+                <span>{actionError}</span>
               </div>
             )}
 
@@ -357,3 +480,4 @@ export const TripsPage = () => {
     </div>
   );
 };
+
